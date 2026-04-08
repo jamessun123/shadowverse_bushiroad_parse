@@ -1,3 +1,12 @@
+USAGE:
+  run_combined.py DECKCODE OUTPUTNAME
+  ex: runcombined.py 5MJ21 runecraft_machina
+
+
+
+
+
+
 decklog_parser.py 
   This script pulls a specific deck code from the bushiroad website and then parses the card data to give english links to the shadowverse website and tcgplayer
   usage: python decklog_parser.py DECKCODE
