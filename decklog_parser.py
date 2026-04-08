@@ -106,11 +106,38 @@ def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
         page.goto(url, wait_until="networkidle", timeout=120000)
         page.wait_for_timeout(5000)
 
-        for img in page.query_selector_all("img.card-view-item"):
-            card_name = (img.get_attribute("alt") or "").strip()
-            img_url = (img.get_attribute("data-src") or img.get_attribute("src") or "").strip()
+        raw_cards = page.eval_on_selector_all(
+            "img.card-view-item",
+            """(imgs) => imgs.map((img) => {
+                const cardName = (img.getAttribute("alt") || "").trim();
+                const imgUrl = (img.getAttribute("data-src") || img.getAttribute("src") || "").trim();
+                const box = img.closest("li") || img.parentElement;
+                let copies = 1;
+                if (box) {
+                  const candidates = box.querySelectorAll(
+                    "[class*='num'],[class*='count'],[class*='copy'],[class*='quantity'],strong,em,span,div"
+                  );
+                  for (const el of candidates) {
+                    const t = (el.textContent || "").trim();
+                    if (/^[0-9]{1,2}$/.test(t)) {
+                      const n = parseInt(t, 10);
+                      if (Number.isFinite(n) && n > 0 && n <= 20) {
+                        copies = n;
+                        break;
+                      }
+                    }
+                  }
+                }
+                return { card_name: cardName, img_url: imgUrl, copies };
+            })""",
+        )
+
+        for row in raw_cards:
+            card_name = str(row.get("card_name", "")).strip()
+            img_url = str(row.get("img_url", "")).strip()
             if not card_name or not img_url:
                 continue
+            copies = int(row.get("copies", 1) or 1)
 
             card_code = card_code_from_url(img_url)
             effective_code = card_code
@@ -130,6 +157,7 @@ def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
                     "card_code_for_en_lookup": effective_code,
                     "card_name_jp": card_name,
                     "image_url": img_url,
+                    "copies": copies,
                     "card_name_en": card_name_en,
                     "en_cards_link": en_cards_link,
                     "tcgplayer_link": build_tcgplayer_link(card_name_en or card_name),

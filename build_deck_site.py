@@ -134,6 +134,7 @@ def render_html(deck_data: Dict[str, Any], cards: List[Dict[str, Any]]) -> str:
     for idx, card in enumerate(cards, start=1):
         code_jp = html.escape(str(card.get("card_code_jp", "")))
         code_en = html.escape(str(card.get("card_code_for_en_lookup", code_jp)))
+        copies = html.escape(str(card.get("copies", "")))
         name_jp = html.escape(str(card.get("card_name_jp", "")))
         name_en = html.escape(str(card.get("card_name_en", "")))
         img = html.escape(str(card.get("en_image_url", card.get("image_url", ""))))
@@ -160,6 +161,7 @@ def render_html(deck_data: Dict[str, Any], cards: List[Dict[str, Any]]) -> str:
                 <div class="card-index">#{idx}</div>
                 <div class="name-en">{name_en or "-"}</div>
                 <div class="name-jp">{name_jp}</div>
+                <div class="copies">Copies: {copies or "-"}</div>
                 <div class="codes">JP: {code_jp} | EN lookup: {code_en}</div>
                 <div class="links">
                   <a href="{en_link}" target="_blank" rel="noreferrer">English Card Page</a>
@@ -279,6 +281,11 @@ def render_html(deck_data: Dict[str, Any], cards: List[Dict[str, Any]]) -> str:
       font-size: 12px;
       color: var(--muted);
       word-break: break-word;
+    }}
+    .copies {{
+      font-size: 12px;
+      color: #334155;
+      font-weight: 600;
     }}
     .links {{
       display: grid;
