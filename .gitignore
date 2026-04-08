@@ -1,3 +1,4 @@
 *.html
 *.json
 /*OUT
+__pycache__/
