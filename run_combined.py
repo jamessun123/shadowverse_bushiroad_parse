@@ -6,8 +6,8 @@ def main() -> int:
     deck_code = sys.argv[1].strip()
     output_name = sys.argv[2].strip()
 
-    json_path = Path(output_name).with_suffix(".json")
-    html_path = Path(output_name).with_suffix(".html")
+    json_path = Path("OUT/" + output_name).with_suffix(".json")
+    html_path = Path("OUT/" + output_name).with_suffix(".html")
 
     with json_path.open("w", encoding="utf-8", newline="\n") as json_file:
         result = subprocess.run(
