@@ -8,9 +8,51 @@ import re
 import sys
 import urllib.parse
 import urllib.request
+import csv
 from typing import Dict, List
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+
+# Load card code mappings
+mappings = {}
+bp_mappings: Dict[str, str] = {}
+
+def load_bp_mappings():
+    """Load card code rewrite rules from BP09.csv and BP16.csv."""
+    global bp_mappings
+    if bp_mappings:
+        return
+
+    for filename in ("BP09.csv", "BP16.csv"):
+        csv_path = Path(__file__).parent / filename
+        if not csv_path.exists():
+            print(f"Warning: {csv_path} not found.", file=sys.stderr)
+            continue
+
+        try:
+            with csv_path.open("r", encoding="utf-8", errors="replace") as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    if not row:
+                        continue
+                    if row[0].strip().lower() == "card number":
+                        for cell in row[1:]:
+                            if not cell:
+                                continue
+                            cell_text = cell.strip()
+                            if "/" not in cell_text:
+                                continue
+                            parts = [part.strip() for part in cell_text.split("/", 1)]
+                            if len(parts) != 2:
+                                continue
+                            jp_code, en_code = parts
+                            if en_code.upper().endswith("EN"):
+                                en_code = en_code[:-2].strip()
+                            bp_mappings[jp_code] = en_code
+                        break
+        except Exception as e:
+            print(f"Error loading {filename} mappings: {e}", file=sys.stderr)
 
 
 def card_code_from_url(url: str) -> str:
@@ -94,6 +136,12 @@ def build_tcgplayer_link(card_name_en: str) -> str:
     )
 
 
+def get_correct_en_code(card_code: str) -> str:
+    """Look up the correct EN card code from the mappings."""
+    return bp_mappings.get(card_code, "") if card_code.startswith("BP") else mappings.get(card_code, "")
+    return mappings.get(card_code, "")
+
+
 def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
     cards: List[Dict[str, str]] = []
     seen = set()
@@ -144,7 +192,13 @@ def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
             if card_code.startswith("PR-"):
                 effective_code = resolve_non_pr_code_from_jp_name(card_name, card_code)
 
-            en_cards_link = build_en_cards_link(effective_code)
+            correct_en_code = get_correct_en_code(effective_code)
+            if correct_en_code:
+                en_lookup_code = correct_en_code
+            else:
+                en_lookup_code = effective_code
+
+            en_cards_link = build_en_cards_link(en_lookup_code)
             card_name_en = fetch_en_card_name(en_cards_link)
             key = (card_code, card_name)
             if key in seen:
@@ -154,7 +208,7 @@ def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
             cards.append(
                 {
                     "card_code_jp": card_code,
-                    "card_code_for_en_lookup": effective_code,
+                    "card_code_for_en_lookup": en_lookup_code,
                     "card_name_jp": card_name,
                     "image_url": img_url,
                     "copies": copies,
@@ -172,6 +226,8 @@ def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+
+    load_bp_mappings()
 
     if len(sys.argv) < 2:
         print("Usage: python decklog_parser.py <DECK_CODE>")
