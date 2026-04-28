@@ -149,7 +149,10 @@ def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
 
     with sync_playwright() as p:
         # Deck Log blocks strict headless in some environments; headed mode is more reliable.
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"]
+        )
         page = browser.new_page()
         page.goto(url, wait_until="networkidle", timeout=120000)
         page.wait_for_timeout(5000)

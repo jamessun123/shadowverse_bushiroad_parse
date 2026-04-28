@@ -62,7 +62,10 @@ def extract_en_image_url_via_browser(en_card_url: str) -> str:
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
+            )
             page = browser.new_page()
             page.goto(en_card_url, wait_until="networkidle", timeout=120000)
             page.wait_for_timeout(1200)
