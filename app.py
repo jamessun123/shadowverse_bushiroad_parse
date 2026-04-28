@@ -9,17 +9,37 @@ from build_deck_site import render_html, extract_en_image_url
 # Google Drive
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from google.cloud import secretmanager
+import json
 
 app = Flask(__name__)
 
 FOLDER_ID = "1-zgElUGMt6nxqX5jin1rc1Tk-qJlduE5"
 
-def upload_file(file_path):
-    from google.auth import default
-    creds, _ = default(scopes=["https://www.googleapis.com/auth/drive"])
+def load_token():
+    client = secretmanager.SecretManagerServiceClient()
+    name = "projects/YOUR_PROJECT_ID/secrets/drive-oauth-token/versions/latest"
 
-    service = build("drive", "v3", credentials=creds)
+    response = client.access_secret_version(request={"name": name})
+    return json.loads(response.payload.data.decode("UTF-8"))
+
+def get_drive_service():
+    SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+    # Load token (we'll wire this to Secret Manager later)
+    with open("token.json", "r") as f:
+        creds = Credentials.from_authorized_user_info(load_token(), SCOPES)
+
+    # Refresh if needed
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+
+    return build("drive", "v3", credentials=creds)
+
+def upload_file(file_path):
+    service = get_drive_service()
 
     file_metadata = {
         "name": os.path.basename(file_path),
@@ -33,8 +53,7 @@ def upload_file(file_path):
     file = service.files().create(
         body=file_metadata,
         media_body=media,
-        fields="id",
-        supportsAllDrives=True
+        fields="id"
     ).execute()
 
     return f"https://drive.google.com/file/d/{file['id']}/view"
