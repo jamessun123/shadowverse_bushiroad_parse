@@ -40,10 +40,6 @@ def upload_file(file_path):
 
 @app.route("/", methods=["POST"])
 def run():
-    # 🔒 simple protection
-    if request.headers.get("x-api-key") != "MY_SECRET":
-        return "unauthorized", 403
-
     data = request.json
     deck_code = data.get("deck_code")
     output_name = data.get("output_name", str(uuid.uuid4()))
