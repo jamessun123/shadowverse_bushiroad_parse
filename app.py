@@ -25,13 +25,16 @@ def upload_file(file_path):
         "name": os.path.basename(file_path),
         "parents": [FOLDER_ID]
     }
+    
+    print("Uploading to folder:", FOLDER_ID)
 
     media = MediaFileUpload(file_path, mimetype="text/html")
 
     file = service.files().create(
         body=file_metadata,
         media_body=media,
-        fields="id"
+        fields="id",
+        supportsAllDrives=True
     ).execute()
 
     return f"https://drive.google.com/file/d/{file['id']}/view"
