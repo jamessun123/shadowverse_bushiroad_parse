@@ -1,4 +1,6 @@
 from flask import Flask, request, jsonify
+import json
+import logging
 import os
 import uuid
 
@@ -12,49 +14,61 @@ from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from google.cloud import secretmanager
-import json
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
 FOLDER_ID = "1-zgElUGMt6nxqX5jin1rc1Tk-qJlduE5"
+TOKEN_SECRET_NAME = os.environ.get(
+    "GOOGLE_OAUTH_TOKEN_SECRET_RESOURCE",
+    "projects/shadowverse-494623/secrets/drive-oauth-token/versions/latest"
+)
 
 def load_token():
+    logger.debug("Loading OAuth token from Secret Manager: %s", TOKEN_SECRET_NAME)
     client = secretmanager.SecretManagerServiceClient()
-    name = "projects/YOUR_PROJECT_ID/secrets/drive-oauth-token/versions/latest"
+    response = client.access_secret_version(request={"name": TOKEN_SECRET_NAME})
+    token_data = response.payload.data.decode("utf-8")
+    logger.debug("Loaded token payload (%d bytes)", len(token_data))
+    return json.loads(token_data)
 
-    response = client.access_secret_version(request={"name": name})
-    return json.loads(response.payload.data.decode("UTF-8"))
 
 def get_drive_service():
     SCOPES = ["https://www.googleapis.com/auth/drive"]
+    logger.debug("Initializing Drive service with scopes: %s", SCOPES)
 
-    # Load token (we'll wire this to Secret Manager later)
-    with open("token.json", "r") as f:
-        creds = Credentials.from_authorized_user_info(load_token(), SCOPES)
+    token_info = load_token()
+    creds = Credentials.from_authorized_user_info(token_info, SCOPES)
+    logger.debug("Loaded credentials, expired=%s refresh_token=%s", creds.expired, bool(creds.refresh_token))
 
-    # Refresh if needed
     if creds.expired and creds.refresh_token:
+        logger.debug("Refreshing expired credentials")
         creds.refresh(Request())
+        logger.debug("Credentials refreshed")
 
-    return build("drive", "v3", credentials=creds)
+    service = build("drive", "v3", credentials=creds)
+    logger.debug("Drive service built successfully")
+    return service
 
 def upload_file(file_path):
+    logger.debug("Preparing to upload file: %s", file_path)
     service = get_drive_service()
 
     file_metadata = {
         "name": os.path.basename(file_path),
         "parents": [FOLDER_ID]
     }
-    
-    print("Uploading to folder:", FOLDER_ID)
+    logger.debug("Uploading to folder: %s", FOLDER_ID)
 
     media = MediaFileUpload(file_path, mimetype="text/html")
-
     file = service.files().create(
         body=file_metadata,
         media_body=media,
         fields="id"
     ).execute()
+    logger.debug("Upload complete; file id=%s", file.get("id"))
 
     return f"https://drive.google.com/file/d/{file['id']}/view"
 
@@ -63,34 +77,38 @@ def run():
     data = request.json
     deck_code = data.get("deck_code")
     output_name = data.get("output_name", str(uuid.uuid4()))
+    logger.debug("Received request: deck_code=%s output_name=%s", deck_code, output_name)
 
     if not deck_code:
+        logger.debug("Request missing deck_code")
         return jsonify({"error": "Missing deck_code"}), 400
 
     try:
+        logger.debug("Loading BP mappings")
         load_bp_mappings()
 
-        # Step 1: scrape
+        logger.debug("Parsing deck page for deck_code: %s", deck_code)
         deck_data = {
             "deck_code": deck_code,
             "cards": parse_deck_page(deck_code)
         }
 
-        # Step 2: enrich cards (⚠️ potential cost hotspot)
+        logger.debug("Enriching card data with English image URLs")
         for card in deck_data["cards"]:
             en_link = card.get("en_cards_link", "")
             card["en_image_url"] = extract_en_image_url(en_link, "")
 
-        # Step 3: render HTML
+        logger.debug("Rendering HTML output")
         html = render_html(deck_data, deck_data["cards"])
 
-        # Step 4: save temp file
         file_path = f"/tmp/{output_name}.html"
+        logger.debug("Saving rendered HTML to temporary file: %s", file_path)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(html)
 
-        # Step 5: upload
+        logger.debug("Uploading generated file to Google Drive")
         drive_link = upload_file(file_path)
+        logger.debug("Upload finished; drive_link=%s", drive_link)
 
         return jsonify({
             "status": "success",
@@ -98,6 +116,7 @@ def run():
         })
 
     except Exception as e:
+        logger.exception("Unhandled exception during request processing")
         return jsonify({"error": str(e)}), 500
     
 if __name__ == "__main__":
