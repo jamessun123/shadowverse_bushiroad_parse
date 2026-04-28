@@ -52,8 +52,8 @@ def get_drive_service():
     logger.debug("Drive service built successfully")
     return service
 
-def upload_file(file_path):
-    logger.debug("Preparing to upload file: %s", file_path)
+def upload_file(file_path, mimetype="text/html"):
+    logger.debug("Preparing to upload file: %s (mimetype=%s)", file_path, mimetype)
     service = get_drive_service()
 
     file_metadata = {
@@ -62,7 +62,7 @@ def upload_file(file_path):
     }
     logger.debug("Uploading to folder: %s", FOLDER_ID)
 
-    media = MediaFileUpload(file_path, mimetype="text/html")
+    media = MediaFileUpload(file_path, mimetype=mimetype)
     file = service.files().create(
         body=file_metadata,
         media_body=media,
@@ -101,18 +101,28 @@ def run():
         logger.debug("Rendering HTML output")
         html = render_html(deck_data, deck_data["cards"])
 
-        file_path = f"/tmp/{output_name}.html"
-        logger.debug("Saving rendered HTML to temporary file: %s", file_path)
-        with open(file_path, "w", encoding="utf-8") as f:
+        html_file_path = f"/tmp/{output_name}.html"
+        logger.debug("Saving rendered HTML to temporary file: %s", html_file_path)
+        with open(html_file_path, "w", encoding="utf-8") as f:
             f.write(html)
 
-        logger.debug("Uploading generated file to Google Drive")
-        drive_link = upload_file(file_path)
-        logger.debug("Upload finished; drive_link=%s", drive_link)
+        json_file_path = f"/tmp/{output_name}.json"
+        logger.debug("Saving deck data to JSON file: %s", json_file_path)
+        with open(json_file_path, "w", encoding="utf-8") as f:
+            json.dump(deck_data, f, indent=2)
+
+        logger.debug("Uploading HTML file to Google Drive")
+        html_drive_link = upload_file(html_file_path, mimetype="text/html")
+        logger.debug("HTML upload finished; drive_link=%s", html_drive_link)
+
+        logger.debug("Uploading JSON file to Google Drive")
+        json_drive_link = upload_file(json_file_path, mimetype="application/json")
+        logger.debug("JSON upload finished; drive_link=%s", json_drive_link)
 
         return jsonify({
             "status": "success",
-            "drive_link": drive_link
+            "html_link": html_drive_link,
+            "json_link": json_drive_link
         })
 
     except Exception as e:

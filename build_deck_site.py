@@ -50,63 +50,13 @@ def build_en_image_from_card_link(en_card_url: str) -> str:
     return candidate if url_exists(candidate) else ""
 
 
-def extract_en_image_url_via_browser(en_card_url: str) -> str:
-    """
-    Render EN card page and extract the best candidate image URL.
-    Uses Playwright because card content may be client-rendered.
-    """
-    try:
-        from playwright.sync_api import sync_playwright
-    except Exception:
-        return ""
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage"]
-            )
-            page = browser.new_page()
-            page.goto(en_card_url, wait_until="networkidle", timeout=120000)
-            page.wait_for_timeout(1200)
-            srcs = page.eval_on_selector_all(
-                "img",
-                """els => els
-                    .map(e => e.currentSrc || e.src || "")
-                    .filter(Boolean)""",
-            )
-            browser.close()
-    except Exception:
-        return ""
-
-    if not srcs:
-        return ""
-
-    filtered = []
-    for src in srcs:
-        s = src.lower()
-        if "/cardlist/" not in s:
-            continue
-        if "assets/images/common/ogp.jpg" in s:
-            continue
-        if any(x in s for x in ("logo", "icon", "banner", "twitter", "facebook", "youtube")):
-            continue
-        filtered.append(src)
-    if not filtered:
-        return ""
-    filtered.sort(key=lambda x: ("en.png" in x.lower(), x.lower().endswith(".png")), reverse=True)
-    return filtered[0]
-
-
 def extract_en_image_url(en_card_url: str, fallback: str) -> str:
+    # 1. best case: deterministic URL
     from_link = build_en_image_from_card_link(en_card_url)
     if from_link:
         return from_link
 
-    rendered = extract_en_image_url_via_browser(en_card_url)
-    if rendered:
-        return rendered
-
+    # 2. HTML OGP fallback (only network request)
     try:
         page = fetch_text(en_card_url)
     except Exception:
@@ -119,13 +69,13 @@ def extract_en_image_url(en_card_url: str, fallback: str) -> str:
     )
     if m:
         candidate = m.group(1).strip()
-        # EN pages often expose a generic OGP image; prefer real card art instead.
         if "assets/images/common/ogp.jpg" not in candidate:
             return candidate
 
     m = re.search(r'https://[^"\']+/cardlist/[^"\']+\.png', page, flags=re.IGNORECASE)
     if m:
         return m.group(0)
+
     return fallback
 
 

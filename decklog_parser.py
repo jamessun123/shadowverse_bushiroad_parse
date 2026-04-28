@@ -11,8 +11,7 @@ import urllib.request
 import csv
 from typing import Dict, List
 from pathlib import Path
-
-from playwright.sync_api import sync_playwright
+import requests
 
 # Load card code mappings
 mappings = {}
@@ -139,103 +138,88 @@ def build_tcgplayer_link(card_name_en: str) -> str:
 def get_correct_en_code(card_code: str) -> str:
     """Look up the correct EN card code from the mappings."""
     return bp_mappings.get(card_code, "") if card_code.startswith("BP") else mappings.get(card_code, "")
-    return mappings.get(card_code, "")
 
 
 def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
     cards: List[Dict[str, str]] = []
     seen = set()
-    url = "https://decklog.bushiroad.com/view/" + deck_code
 
-    with sync_playwright() as p:
-        # Deck Log blocks strict headless in some environments; headed mode is more reliable.
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-blink-features=AutomationControlled"
-            ]
-        )
-        context = browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
-        )
-        context.add_init_script("""
-        Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined
-        });
-        """)
-        page = browser.new_page()
-        page.set_viewport_size({"width": 1920, "height": 1080})
-        page.goto(url, wait_until="networkidle", timeout=60000)
-        page.wait_for_timeout(3000)
+    session = requests.Session()
 
-        raw_cards = page.eval_on_selector_all(
-            "img.card-view-item",
-            """(imgs) => imgs.map((img) => {
-                const cardName = (img.getAttribute("alt") || "").trim();
-                const imgUrl = (img.getAttribute("data-src") || img.getAttribute("src") || "").trim();
-                const box = img.closest("li") || img.parentElement;
-                let copies = 1;
-                if (box) {
-                  const candidates = box.querySelectorAll(
-                    "[class*='num'],[class*='count'],[class*='copy'],[class*='quantity'],strong,em,span,div"
-                  );
-                  for (const el of candidates) {
-                    const t = (el.textContent || "").trim();
-                    if (/^[0-9]{1,2}$/.test(t)) {
-                      const n = parseInt(t, 10);
-                      if (Number.isFinite(n) && n > 0 && n <= 20) {
-                        copies = n;
-                        break;
-                      }
-                    }
-                  }
-                }
-                return { card_name: cardName, img_url: imgUrl, copies };
-            })""",
-        )
+    url = f"https://decklog.bushiroad.com/system/app/api/view/{deck_code}"
 
-        for row in raw_cards:
-            card_name = str(row.get("card_name", "")).strip()
-            img_url = str(row.get("img_url", "")).strip()
-            if not card_name or not img_url:
-                continue
-            copies = int(row.get("copies", 1) or 1)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": f"https://decklog.bushiroad.com/view/{deck_code}",
+        "Origin": "https://decklog.bushiroad.com",
+    }
 
-            card_code = card_code_from_url(img_url)
-            effective_code = card_code
-            if card_code.startswith("PR-"):
-                effective_code = resolve_non_pr_code_from_jp_name(card_name, card_code)
+    # IMPORTANT: must include session cookie
+    cookies = {
+        "CAKEPHP": "4s29poomsgjh9biork06v17a5r"
+    }
 
-            correct_en_code = get_correct_en_code(effective_code)
-            if correct_en_code:
-                en_lookup_code = correct_en_code
-            else:
-                en_lookup_code = effective_code
+    res = session.post(
+        url,
+        headers=headers,
+        cookies=cookies,
+        data="",  # Content-Length: 0
+        timeout=30
+    )
 
-            en_cards_link = build_en_cards_link(en_lookup_code)
-            card_name_en = fetch_en_card_name(en_cards_link)
-            key = (card_code, card_name)
-            if key in seen:
-                continue
-            seen.add(key)
+    res.raise_for_status()
 
-            cards.append(
-                {
-                    "card_code_jp": card_code,
-                    "card_code_for_en_lookup": en_lookup_code,
-                    "card_name_jp": card_name,
-                    "image_url": img_url,
-                    "copies": copies,
-                    "card_name_en": card_name_en,
-                    "en_cards_link": en_cards_link,
-                    "tcgplayer_link": build_tcgplayer_link(card_name_en or card_name),
-                }
-            )
+    data = res.json()
 
-        browser.close()
+    main_list = data.get("list", [])
+    sub_list = data.get("sub_list", [])
+
+    items = []
+    if isinstance(main_list, list):
+        items.extend(main_list)
+    if isinstance(sub_list, list):
+        items.extend(sub_list)
+
+    for item in items:
+        card_code = item.get("card_number", "").strip()
+        copies = int(item.get("num", 1))
+
+        if not card_code:
+            continue
+
+        # Normalize image URL
+        img_path = item.get("img", "").strip()
+        img_url = f"https://decklog.bushiroad.com/static/img/card/{img_path}" if img_path else ""
+
+        # Prevent duplicates (same card entry)
+        key = (card_code, img_url)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # EN lookup logic (kept from your original pipeline)
+        effective_code = card_code
+
+        if card_code.startswith("PR-"):
+            effective_code = resolve_non_pr_code_from_jp_name(card_code, card_code)
+
+        correct_en_code = get_correct_en_code(effective_code)
+        en_lookup_code = correct_en_code if correct_en_code else effective_code
+
+        en_cards_link = build_en_cards_link(en_lookup_code)
+        card_name_en = fetch_en_card_name(en_cards_link)
+
+        cards.append({
+            "card_code_jp": card_code,
+            "card_code_for_en_lookup": en_lookup_code,
+            "image_url": img_url,
+            "copies": copies,
+            "card_name_en": card_name_en,
+            "en_cards_link": en_cards_link,
+            "tcgplayer_link": build_tcgplayer_link(card_name_en or card_code),
+        })
 
     return cards
 
