@@ -17,6 +17,9 @@ import requests
 mappings = {}
 bp_mappings: Dict[str, str] = {}
 
+def debug(message: str) -> None:
+    print(f"DEBUG: {message}", file=sys.stderr)
+
 def load_bp_mappings():
     """Load card code rewrite rules from BP09.csv and BP16.csv."""
     global bp_mappings
@@ -26,7 +29,6 @@ def load_bp_mappings():
     for filename in ("BP09.csv", "BP16.csv"):
         csv_path = Path(__file__).parent / filename
         if not csv_path.exists():
-            print(f"Warning: {csv_path} not found.", file=sys.stderr)
             continue
 
         try:
@@ -103,7 +105,7 @@ def build_en_cards_link(card_code: str) -> str:
     return "https://en.shadowverse-evolve.com/cards/?cardno=" + card_code.upper() + "EN"
 
 
-def fetch_en_card_name(en_cards_link: str) -> str:
+def fetch_en_card_info(en_cards_link: str) -> tuple[str, bool]:
     req = urllib.request.Request(
         en_cards_link,
         headers={
@@ -115,14 +117,27 @@ def fetch_en_card_name(en_cards_link: str) -> str:
 
     # Prefer title format: "Albert, Tempestuous Doom | CARDS | Shadowverse: Evolve"
     m = re.search(r"<title>\s*([^<]+?)\s*\|\s*CARDS\s*\|", html, flags=re.IGNORECASE)
-    if m:
-        return m.group(1).strip()
+    name = m.group(1).strip() if m else ""
 
-    # Fallback to page heading.
-    m = re.search(r"<h1[^>]*>\s*([^<]+?)\s*</h1>", html, flags=re.IGNORECASE)
+    if not name:
+        m = re.search(r"<h1[^>]*>\s*([^<]+?)\s*</h1>", html, flags=re.IGNORECASE)
+        if m:
+            name = m.group(1).strip()
+
+    # Determine whether the English card is evolved.
+    card_type = ""
+    m = re.search(
+        r"Card Type\s*(?:</[^>]+>\s*)?<[^>]*>\s*([^<]+)",
+        html,
+        flags=re.IGNORECASE,
+    )
+    if not m:
+        m = re.search(r"Card Type\s*[:\-]?\s*([^<\n\r]+)", html, flags=re.IGNORECASE)
     if m:
-        return m.group(1).strip()
-    return ""
+        card_type = m.group(1).strip()
+
+    is_evolved = "/ evolved" in card_type.lower()
+    return name, is_evolved
 
 
 def build_tcgplayer_link(card_name_en: str) -> str:
@@ -133,6 +148,40 @@ def build_tcgplayer_link(card_name_en: str) -> str:
         + query
         + "&view=grid"
     )
+
+
+def build_jp_cards_link(card_code: str) -> str:
+    return "https://shadowverse-evolve.com/cards/?cardno=" + card_code.upper()
+
+
+def fetch_jp_card_is_evolved(card_code: str) -> bool:
+    jp_cards_link = build_jp_cards_link(card_code)
+    try:
+        req = urllib.request.Request(
+            jp_cards_link,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            html = resp.read().decode("utf-8", "ignore")
+    except Exception as e:
+        debug(f"Failed to fetch JP evolved status for {card_code}: {e}")
+        return False
+
+    card_type = ""
+    m = re.search(
+        r"カード種類\s*(?:</[^>]+>\s*)?<[^>]*>\s*([^<]+)",
+        html,
+        flags=re.IGNORECASE,
+    )
+    if not m:
+        m = re.search(r"カード種類\s*[:\-]?\s*([^<\n\r]+)", html, flags=re.IGNORECASE)
+    if m:
+        card_type = m.group(1).strip()
+
+    is_evolved = "エボルヴ" in card_type
+    return is_evolved
 
 
 def get_correct_en_code(card_code: str) -> str:
@@ -185,6 +234,7 @@ def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
     for item in items:
         card_code = item.get("card_number", "").strip()
         copies = int(item.get("num", 1))
+        card_name_jp = item.get("name", "").strip()
 
         if not card_code:
             continue
@@ -202,18 +252,30 @@ def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
         # EN lookup logic (kept from your original pipeline)
         effective_code = card_code
 
-        if card_code.startswith("PR-"):
-            effective_code = resolve_non_pr_code_from_jp_name(card_code, card_code)
+        # Resolve PR cards to their non-PR equivalents using Japanese card name
+        if card_code.startswith("PR-") and card_name_jp:
+            effective_code = resolve_non_pr_code_from_jp_name(card_name_jp, card_code)
 
         correct_en_code = get_correct_en_code(effective_code)
         en_lookup_code = correct_en_code if correct_en_code else effective_code
 
         en_cards_link = build_en_cards_link(en_lookup_code)
-        card_name_en = fetch_en_card_name(en_cards_link)
+        card_name_en = ""
+        is_evolved = False
+        try:
+            card_name_en, is_evolved = fetch_en_card_info(en_cards_link)
+        except Exception as e:
+            debug(f"Failed to fetch EN card info for {en_lookup_code}: {e}")
+
+        if not is_evolved and card_code.startswith("PR-"):
+            is_evolved = fetch_jp_card_is_evolved(card_code)
+        if is_evolved and card_name_en and not card_name_en.endswith(" (Evolved)"):
+            card_name_en = f"{card_name_en} (Evolved)"
 
         cards.append({
             "card_code_jp": card_code,
             "card_code_for_en_lookup": en_lookup_code,
+            "card_name_jp": card_name_jp,
             "image_url": img_url,
             "copies": copies,
             "card_name_en": card_name_en,
