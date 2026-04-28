@@ -16,10 +16,8 @@ app = Flask(__name__)
 FOLDER_ID = "1-zgElUGMt6nxqX5jin1rc1Tk-qJlduE5"
 
 def upload_file(file_path):
-    creds = service_account.Credentials.from_service_account_file(
-        "service-account.json",
-        scopes=["https://www.googleapis.com/auth/drive"]
-    )
+    from google.auth import default
+    creds, _ = default(scopes=["https://www.googleapis.com/auth/drive"])
 
     service = build("drive", "v3", credentials=creds)
 
