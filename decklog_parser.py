@@ -151,11 +151,25 @@ def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
         # Deck Log blocks strict headless in some environments; headed mode is more reliable.
         browser = p.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"]
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled"
+            ]
         )
+        context = browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36"
+        )
+        context.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {
+        get: () => undefined
+        });
+        """)
         page = browser.new_page()
-        page.goto(url, wait_until="networkidle", timeout=120000)
-        page.wait_for_timeout(5000)
+        page.set_viewport_size({"width": 1920, "height": 1080})
+        page.goto(url, wait_until="networkidle", timeout=60000)
+        page.wait_for_timeout(3000)
 
         raw_cards = page.eval_on_selector_all(
             "img.card-view-item",
