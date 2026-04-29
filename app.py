@@ -5,7 +5,7 @@ import os
 import uuid
 
 # IMPORT your functions from existing files
-from decklog_parser import parse_deck_page, load_bp_mappings
+from decklog_parser import parse_deck_page, load_code_mappings
 from build_deck_site import render_html, extract_en_image_url
 
 # Google Drive
@@ -85,7 +85,7 @@ def run():
 
     try:
         logger.debug("Loading BP mappings")
-        load_bp_mappings()
+        load_code_mappings()
 
         logger.debug("Parsing deck page for deck_code: %s", deck_code)
         deck_data = {

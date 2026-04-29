@@ -15,43 +15,70 @@ import requests
 
 # Load card code mappings
 mappings = {}
-bp_mappings: Dict[str, str] = {}
+code_mappings: Dict[str, str] = {}
 
 def debug(message: str) -> None:
     print(f"DEBUG: {message}", file=sys.stderr)
 
-def load_bp_mappings():
-    """Load card code rewrite rules from BP09.csv and BP16.csv."""
-    global bp_mappings
-    if bp_mappings:
+def load_code_mappings():
+    """Load card code rewrite rules from BP09.csv, BP16.csv, and DSD.tsv."""
+    global code_mappings
+    if code_mappings:
         return
 
-    for filename in ("BP09.csv", "BP16.csv"):
+    # Check for DSD.tsv first, then fall back to DSD.csv
+    dsd_files = [f for f in ["DSD.tsv", "DSD.csv"] if (Path(__file__).parent / f).exists()]
+    files_to_load = ["BP09.csv", "BP16.csv"] + dsd_files
+
+    for filename in files_to_load:
         csv_path = Path(__file__).parent / filename
         if not csv_path.exists():
             continue
 
         try:
+            # Use tab delimiter for TSV files, comma for CSV
+            delimiter = "\t" if filename.endswith(".tsv") else ","
+            
             with csv_path.open("r", encoding="utf-8", errors="replace") as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if not row:
-                        continue
-                    if row[0].strip().lower() == "card number":
-                        for cell in row[1:]:
-                            if not cell:
+                reader = csv.reader(f, delimiter=delimiter)
+                rows = list(reader)
+                
+                if filename.startswith("DSD"):
+                    # DSD files have mappings in the second row
+                    if len(rows) >= 2:
+                        mapping_row = rows[1]  # Second row contains the mappings
+                        for cell in mapping_row:
+                            if not cell or "/" not in cell:
                                 continue
-                            cell_text = cell.strip()
-                            if "/" not in cell_text:
-                                continue
-                            parts = [part.strip() for part in cell_text.split("/", 1)]
+                            parts = [part.strip() for part in cell.split("/", 1)]
                             if len(parts) != 2:
                                 continue
                             jp_code, en_code = parts
                             if en_code.upper().endswith("EN"):
                                 en_code = en_code[:-2].strip()
-                            bp_mappings[jp_code] = en_code
-                        break
+                            code_mappings[jp_code] = en_code
+                            debug(f"Loaded DSD mapping: {jp_code} -> {en_code}")
+                else:
+                    # BP files have "Card Number" header
+                    for row in rows:
+                        if not row:
+                            continue
+                        if row[0].strip().lower() == "card number":
+                            for cell in row[1:]:
+                                if not cell:
+                                    continue
+                                cell_text = cell.strip()
+                                if "/" not in cell_text:
+                                    continue
+                                parts = [part.strip() for part in cell_text.split("/", 1)]
+                                if len(parts) != 2:
+                                    continue
+                                jp_code, en_code = parts
+                                if en_code.upper().endswith("EN"):
+                                    en_code = en_code[:-2].strip()
+                                code_mappings[jp_code] = en_code
+                                debug(f"Loaded BP mapping: {jp_code} -> {en_code}")
+                            break
         except Exception as e:
             print(f"Error loading {filename} mappings: {e}", file=sys.stderr)
 
@@ -186,7 +213,7 @@ def fetch_jp_card_is_evolved(card_code: str) -> bool:
 
 def get_correct_en_code(card_code: str) -> str:
     """Look up the correct EN card code from the mappings."""
-    return bp_mappings.get(card_code, "") if card_code.startswith("BP") else mappings.get(card_code, "")
+    return code_mappings.get(card_code, "") if card_code.startswith(("BP", "DSD")) else mappings.get(card_code, "")
 
 
 def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
@@ -257,6 +284,7 @@ def parse_deck_page(deck_code: str) -> List[Dict[str, str]]:
             effective_code = resolve_non_pr_code_from_jp_name(card_name_jp, card_code)
 
         correct_en_code = get_correct_en_code(effective_code)
+        debug(f"Using effective_code={effective_code} correct_en_code={correct_en_code}")
         en_lookup_code = correct_en_code if correct_en_code else effective_code
 
         en_cards_link = build_en_cards_link(en_lookup_code)
@@ -290,7 +318,7 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
-    load_bp_mappings()
+    load_code_mappings()
 
     if len(sys.argv) < 2:
         print("Usage: python decklog_parser.py <DECK_CODE>")
