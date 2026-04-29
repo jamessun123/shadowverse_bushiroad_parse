@@ -8,7 +8,6 @@ import json
 import re
 import sys
 import urllib.request
-import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -31,52 +30,24 @@ def url_exists(url: str) -> bool:
         return False
 
 
-def build_en_image_from_card_link(en_card_url: str) -> str:
-    parsed = urllib.parse.urlparse(en_card_url)
-    qs = urllib.parse.parse_qs(parsed.query)
-    cardno = (qs.get("cardno") or [""])[0].strip().upper()
-    if not cardno:
-        return ""
-    set_code = cardno.split("-")[0]
+def extract_en_image_url(card_code: str, fallback: str) -> str:
+    """Build EN image URL directly from the card code (e.g., 'BP16-SL01EN')."""
+    if not card_code:
+        return fallback
+    
+    # Extract set code from card code (e.g., 'BP16-SL01EN' -> 'BP16')
+    set_code = card_code.split("-")[0]
     if not set_code:
-        return ""
+        return fallback
+    
     candidate = (
         "https://en.shadowverse-evolve.com/wordpress/wp-content/images/cardlist/"
         + set_code
         + "/"
-        + cardno
+        + card_code
         + ".png"
     )
-    return candidate if url_exists(candidate) else ""
-
-
-def extract_en_image_url(en_card_url: str, fallback: str) -> str:
-    # 1. best case: deterministic URL
-    from_link = build_en_image_from_card_link(en_card_url)
-    if from_link:
-        return from_link
-
-    # 2. HTML OGP fallback (only network request)
-    try:
-        page = fetch_text(en_card_url)
-    except Exception:
-        return fallback
-
-    m = re.search(
-        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
-        page,
-        flags=re.IGNORECASE,
-    )
-    if m:
-        candidate = m.group(1).strip()
-        if "assets/images/common/ogp.jpg" not in candidate:
-            return candidate
-
-    m = re.search(r'https://[^"\']+/cardlist/[^"\']+\.png', page, flags=re.IGNORECASE)
-    if m:
-        return m.group(0)
-
-    return fallback
+    return candidate if url_exists(candidate) else fallback
 
 
 def render_html(deck_data: Dict[str, Any], cards: List[Dict[str, Any]]) -> str:
@@ -354,9 +325,14 @@ def main() -> int:
 
     cards: List[Dict[str, Any]] = list(deck_data.get("cards", []))
     for card in cards:
-        en_link = str(card.get("en_cards_link", "")).strip()
-        # Intentionally avoid JP image fallback; display only EN-sourced images.
-        card["en_image_url"] = extract_en_image_url(en_link, "") if en_link else ""
+        card_code_en = str(card.get("card_code_for_en_lookup", "")).strip()
+        # Append 'EN' suffix if not already present for image URL construction
+        if card_code_en and not card_code_en.upper().endswith("EN"):
+            card_code_en += "EN"
+        # Build image URL directly from card code
+        card["en_image_url"] = extract_en_image_url(card_code_en, "") if card_code_en else ""
+        card_code = card.get("card_code_jp", "UNKNOWN")
+        print(f"DEBUG: Card {card_code}: en_image_url = {card['en_image_url']}", file=sys.stderr)
 
     html_doc = render_html(deck_data, cards)
     with output_path.open("w", encoding="utf-8", newline="\n") as f:
