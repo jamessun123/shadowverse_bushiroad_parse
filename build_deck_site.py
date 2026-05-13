@@ -45,7 +45,7 @@ def extract_en_image_url(card_code: str, fallback: str) -> str:
         + set_code
         + "/"
         + card_code
-        + ".png"
+        + "EN.png"
     )
     return candidate if url_exists(candidate) else fallback
 
