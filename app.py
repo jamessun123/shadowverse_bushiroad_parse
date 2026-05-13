@@ -95,8 +95,10 @@ def run():
 
         logger.debug("Enriching card data with English image URLs")
         for card in deck_data["cards"]:
-            en_link = card.get("en_cards_link", "")
-            card["en_image_url"] = extract_en_image_url(en_link, "")
+            card_code_en = str(card.get("card_code_for_en_lookup", "")).strip()
+            if card_code_en and not card_code_en.upper().endswith("EN"):
+                card_code_en += "EN"
+            card["en_image_url"] = extract_en_image_url(card_code_en, "")
 
         logger.debug("Rendering HTML output")
         html = render_html(deck_data, deck_data["cards"])

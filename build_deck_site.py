@@ -31,21 +31,28 @@ def url_exists(url: str) -> bool:
 
 
 def extract_en_image_url(card_code: str, fallback: str) -> str:
-    """Build EN image URL directly from the card code (e.g., 'BP16-SL01EN')."""
+    """Build EN image URL from the card code or English card page link."""
     if not card_code:
         return fallback
-    
-    # Extract set code from card code (e.g., 'BP16-SL01EN' -> 'BP16')
-    set_code = card_code.split("-")[0]
+
+    card_code = card_code.strip()
+    match = re.search(r"cardno=([A-Z0-9-]+EN)", card_code, re.IGNORECASE)
+    if match:
+        card_code = match.group(1)
+
+    if not card_code.upper().endswith("EN"):
+        card_code += "EN"
+
+    set_code = card_code.split("-", 1)[0]
     if not set_code:
         return fallback
-    
+
     candidate = (
         "https://en.shadowverse-evolve.com/wordpress/wp-content/images/cardlist/"
         + set_code
         + "/"
         + card_code
-        + "EN.png"
+        + ".png"
     )
     return candidate if url_exists(candidate) else fallback
 
